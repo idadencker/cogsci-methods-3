@@ -99,7 +99,7 @@ Pay particular attention to the variables indicating participant and visit.
 
 
 ```{r}
-
+#Give variable of participant ID the same name
 demo <- demo %>%
   rename(ID=Child.ID)
 
@@ -115,6 +115,7 @@ token <- token %>%
 
 
 ```{r}
+
 demo <- demo %>%
   mutate(Visit=as.factor(Visit))
 

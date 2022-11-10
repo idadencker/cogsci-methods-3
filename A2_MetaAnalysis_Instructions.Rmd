@@ -1,0 +1,552 @@
+---
+title: "Assignment 2 - Meta-analysis of pitch in schizophrenia"
+author: "Riccardo Fusaroli"
+date: "16/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+pacman::p_load(msm, tidyverse, brms, grid, gridExtra, readxl, metafor, tibble, ggplot2, hrbrthemes, reshape, dplyr, patchwork, hrbrthemes)
+
+```
+
+# Assignment 2: meta-analysis
+
+## Questions to be answered
+
+1. Simulate data to setup the analysis and gain insight on the structure of the problem. 
+Simulate one dataset of 100 studies (n of participants should follow a normal distribution with mean of 20, sd of 10, but no fewer than 10 participants), with a mean effect size of 0.4, average deviation by study of .4 and measurement error of .8. 
+The data you get should have one row per study, with an effect size mean and standard error. 
+
+Build a proper bayesian model to analyze the simulated data. 
+
+Then simulate publication bias (only some of the studies you simulate are likely to be published, which?), the effect of publication bias on your estimates (re-run the model on published studies, assess the difference), and discuss what this implies for your model. remember to use at least one plot to visualize your results. 
+
+BONUS question: do a power/precision analysis: w this kind of sample sizes (participants) how many studies would you need to acquire good precision (e.g. .1 sd in the pop level estimate)
+
+
+# Question 1
+
+
+#Simulate data
+```{r}
+# Identify parameters
+
+Pop_EffectMean <- 0.4 #The mean of the effect size for the true population, i.e. mu of the overall distribution the all the underlying distributions come from
+Pop_StudySD <- 0.4 #The sd of that true effect size distribution
+Error <- 0.8 # a standard errore measurenment, same for all i.e. it is a value, not a distribution
+
+# number of studies
+Studies <- 100
+
+de <- tibble(
+  Study = seq(Studies),
+  Participants = round(msm::rtnorm(Studies, 20, 10, lower = 10), 0), 
+  StudyEffect = NA, #Effect size drawn from the true distribution
+  Sam_EffectMu = NA, #Effect size of that specific study (based on participants, StudyEffect and TSE)
+  Sam_EffectSigma = NA, #Spread of the effect size for that specific study 
+  TSE = 0.8, #True standard error, i.e. the spread of the StudyEffect estimate 
+  Published = NA, #whether or not the study is published
+)
+
+#Start the simulation 
+for(i in seq(Studies)){
+  de$StudyEffect[i] <- rnorm(1, Pop_EffectMean, Pop_StudySD)
+  sampling <- rnorm(de$Participants[i], de$StudyEffect[i], Error)
+  de$Sam_EffectMu[i] <- mean(sampling)
+  de$Sam_EffectSigma[i] <- sd(sampling)/sqrt(de$Participants[i])
+}
+
+
+```
+
+
+#Build model with simulated data
+```{r}
+#defining the formula
+#note that now effect size is a distribution, not a point-estimate!
+#we tell it to weight by SE, the more error the less weight
+
+model_1 <- bf(Sam_EffectMu | se(Sam_EffectSigma) ~ 1 + (1|Study))
+
+```
+
+#Getting priors
+```{r}
+get_prior(data = de,
+          family = gaussian,
+          model_1)
+```
+
+
+#setting priors
+```{r}
+model_1_priors <- c(
+prior(normal(0, 0.3), class = Intercept),
+prior(normal(0, 0.3), class = sd) 
+)
+
+```
+
+#Running a model that only samples from the prior
+
+```{r}
+model_1_only_priors <- 
+  brm(
+    model_1,
+    data = de,
+    family = gaussian,
+    prior = model_1_priors,
+    sample_prior = "only",
+    iter = 2000, 
+    warmup = 1000,
+    cores = 2,
+    chains = 2,
+    refresh=0,
+    control = list(
+      adapt_delta = 0.999,
+      max_treedepth = 20))
+```
+
+
+#look at pp-checks
+
+```{r}
+pp_check(model_1_only_priors, ndraws = 100)
+```
+
+
+#Fitting a model that also samples from the simulated dataset
+
+```{r}
+fitted_model_1 <- 
+  brm(
+    model_1,
+    data = de,
+    family = gaussian,
+    prior = model_1_priors,
+    sample_prior = T,
+    iter = 2000, 
+    warmup = 1000,
+    cores = 2,
+    refresh=0,
+    chains = 2,
+    control = list(
+      adapt_delta = 0.999,
+      max_treedepth = 20))
+```
+
+#Look at pp-checks of the fitted model
+```{r}
+pp_check(fitted_model_1, ndraws = 100)
+
+#Much better!
+```
+#Look at prior posterier update checks 
+```{r}
+#Make prior posterier update checks 
+
+variables(fitted_model_1)
+Posterior_m <- as_draws_df(fitted_model_1)
+
+#Plot the prior-posterior update plot for the intercept 
+ppp1 <- ggplot(Posterior_m) +
+  geom_density(aes(prior_Intercept), fill="chartreuse2", color="black",alpha=0.6) +
+  geom_density(aes(b_Intercept), fill="deeppink", color="black",alpha=0.6) + 
+  xlab('Intercept') +
+  theme_classic()+
+  ggtitle("intercept for study effect size")+
+      theme(plot.title = element_text(size = 6, face = "bold"))
+
+#Plot the prior-posterior update plot for sigma:
+ppp2 <- ggplot(Posterior_m) +
+  geom_density(aes(prior_sd_Study), fill="chartreuse2", color="black",alpha=0.6) +
+  geom_density(aes(sigma), fill="deeppink", color="black",alpha=0.6) + 
+  xlab('sigma') +
+  theme_classic()+
+  ggtitle("sigma for study effect study")+
+      theme(plot.title = element_text(size = 6, face = "bold"))
+
+#Plot the prior-posterior update plot for sigma for intercept:
+ppp3 <- ggplot(Posterior_m) +
+  geom_density(aes(prior_sd_Study), fill="chartreuse2", color="black",alpha=0.6) +
+  geom_density(aes(sd_Study__Intercept), fill="deeppink", color="black",alpha=0.6) + 
+  xlab('sigma for intercept') +
+  theme_classic()+
+  ggtitle("sigma for intercept")+
+      theme(plot.title = element_text(size = 6, face = "bold"))
+
+
+grid.arrange(ppp1, ppp2, ppp3)
+
+
+#grøn = prior
+#pink = simulated data 
+
+```
+
+
+#Parameter recovery of the fitted model
+```{r}
+print(fitted_model_1)
+```
+
+#Implementing a publication bias
+```{r}
+#Make a column for publication bias
+for(i in seq(Studies)){
+  de$Published[i] <- ifelse(
+    abs(de$Sam_EffectMu[i]) - (2*de$Sam_EffectSigma[i]) > 0,  
+    rbinom(1,1,.9), rbinom(1,1,.1))
+}
+
+#We only 'want' the studies with effect sizes that are more than 2 times the standard deviation of the mean, i.e. siggnificant results. If the criteria of significance is met, there is a 90% possibility of being published, if not only 10%. We however don't care about whether the significant effect size is positive or negative. This is what the abs() specifies. If we had stated a hypothesis about the direction of the effect we could have further added this. 
+```
+
+```{r}
+#Make a new data set that only include the published ones
+new_de <- de%>%
+  filter(Published==1)
+
+```
+
+#Do the whole bayesian flow again with the new dataset
+```{r}
+#Fit a model with the new data set
+fitted_model_2 <- 
+  brm(
+    model_1,
+    data = new_de,
+    family = gaussian,
+    prior = model_1_priors,
+    sample_prior = T,
+    iter = 2000, 
+    warmup = 1000,
+    cores = 2,
+    chains = 2,
+    refresh=0,
+    control = list(
+      adapt_delta = 0.999,
+      max_treedepth = 20))
+
+```
+
+```{r}
+#Do posterior predictive checks
+pp_check(fitted_model_2, ndraws = 100)
+```
+# Prior posterior update checks of the model
+```{r}
+#Do prior posterior update checks
+
+variables(fitted_model_2)
+Posterior_m_2 <- as_draws_df(fitted_model_2)
+
+#Plot the prior-posterior update plot for the intercept 
+ppp1_fitted2 <- ggplot(Posterior_m_2) +
+  geom_density(aes(prior_Intercept), fill="chartreuse2", color="black",alpha=0.6) +
+  geom_density(aes(b_Intercept), fill="deeppink", color="black",alpha=0.6) + 
+  xlab('Intercept') +
+  theme_classic()+
+  ggtitle("intercept for study effect size")+
+      theme(plot.title = element_text(size = 6, face = "bold"))
+
+#Plot the prior-posterior update plot for sigma:
+ppp2_fitted2 <- ggplot(Posterior_m_2) +
+  geom_density(aes(prior_sd_Study), fill="chartreuse2", color="black",alpha=0.6) +
+  geom_density(aes(sigma), fill="deeppink", color="black",alpha=0.6) + 
+  xlab('sigma') +
+  theme_classic()+
+  ggtitle("sigma for study effect study")+
+      theme(plot.title = element_text(size = 6, face = "bold"))
+
+#Plot the prior-posterior update plot for sigma for intercept:
+ppp3_fitted2 <- ggplot(Posterior_m_2) +
+  geom_density(aes(prior_sd_Study), fill="chartreuse2", color="black",alpha=0.6) +
+  geom_density(aes(sd_Study__Intercept), fill="deeppink", color="black",alpha=0.6) + 
+  xlab('sigma for intercept') +
+  theme_classic()+
+  ggtitle("sigma for intercept")+
+      theme(plot.title = element_text(size = 6, face = "bold"))
+
+grid.arrange(ppp1_fitted2, ppp2_fitted2, ppp3_fitted2)
+
+
+
+```
+
+
+```{r}
+#Parameter recovery of the new model
+print(fitted_model_2)
+```
+
+```{r}
+#Visualize the difference of the models
+
+ggplot() +
+  geom_density(aes(Posterior_m$b_Intercept), fill="cyan", color="black",alpha=0.6) +
+  geom_density(aes(Posterior_m_2$b_Intercept), fill="blue1", color="black",alpha=0.6) + 
+  xlab('Intercept') +
+  theme_minimal()+
+  ggtitle(label=" blue = all studies included, purple = bias ",subtitle = "Plot of distributions")+
+      theme(plot.title = element_text(size = 6, face = "bold"))+
+  scale_fill_manual(values = c(all_studies = "cyan", published_studies = "blue1"))
+  
+
+```
+
+
+2. What is the current evidence for distinctive vocal patterns in schizophrenia? 
+Use the data from Parola et al (2020) - https://www.dropbox.com/s/0l9ur0gaabr80a8/Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx?dl=0 - focusing on pitch variability (PITCH_F0SD).  
+
+Describe the data available (studies, participants). 
+
+Using the model from question 1 analyze the data, visualize and report the findings: population level effect size; how well studies reflect it; influential studies, publication bias. 
+
+BONUS question: assess the effect of task on the estimates (model comparison with baseline model)
+
+
+## Question 2
+
+#load in data
+```{r}
+real_data <- read_excel("Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx")
+```
+
+# Make dataset with needed coloumns
+```{r}
+data_PITCH_F0SD <- real_data %>%
+  select(StudyID, ArticleID, contains("MALE_"), contains("FEMALE_"), contains("AGE_"), contains("SAMPLE_SIZE"), contains("PITCH_F0SD_")) %>%   
+  drop_na(contains("PITCH_F0SD_")) %>%
+  mutate(FEMALE_SZ = as.numeric(FEMALE_SZ)) %>% 
+  mutate(FEMALE_HC = as.numeric(FEMALE_HC)) %>% 
+  mutate(MALE_SZ = as.numeric(MALE_SZ)) %>% 
+  mutate(MALE_HC = as.numeric(MALE_HC)) %>%
+  mutate(AGE_M_HC = as.numeric(AGE_M_HC)) %>% 
+  mutate(AGE_SD_HC = as.numeric(AGE_SD_HC)) %>% 
+  mutate(AGE_M_SZ = as.numeric(AGE_M_SZ))%>%
+  mutate(AGE_SD_SZ = as.numeric(AGE_SD_SZ))
+
+data_PITCH_F0SD$names <- rownames(data_PITCH_F0SD)
+
+data_PITCH_F0SD <- data_PITCH_F0SD %>%
+  mutate(names = as.numeric(names))
+
+```
+
+#Describe and vizualise the data
+```{r}
+#All comparing within the 15 studies
+
+
+#Age (geom)
+
+plot21 <- ggplot(PitchMean, aes(names)) +
+  geom_point(aes(names, AGE_M_SZ), color = "seagreen") + # must include argument label "data"
+  geom_point(aes(names, AGE_M_HC), color = "orchid2")+
+  geom_errorbar(aes(ymin=AGE_M_SZ-AGE_SD_SZ, ymax=AGE_M_SZ+AGE_SD_SZ), color = "seagreen")+ 
+  geom_errorbar(aes(ymin=AGE_M_HC-AGE_SD_HC, ymax=AGE_M_HC+AGE_SD_HC), color = "orchid2")+
+    xlab('Study') +
+  ylab('Mean age')+
+  theme_minimal()+
+  ggtitle(label="Age by study")
+
+
+#Gender
+library(ggplot2, reshape)
+
+PitchMean[is.na(PitchMean)] <- 0
+  
+test_m <- PitchMean %>% 
+  summarise(m_F_SZ = mean(FEMALE_SZ), m_F_HC = mean(FEMALE_HC), m_M_SZ = mean(MALE_SZ), m_M_HC = mean(MALE_HC))
+
+  
+plotdata=data.frame("Gender"=c("Female","Male"),
+                    "HC"=c(15.26667,18.4),
+                    "SZ"=c(11.86667,32.53333),
+                    row.names = c("st1","st2"))
+
+#Convert to long format
+d = melt(plotdata, id.vars = "Gender")
+
+plot22 <- ggplot(data = d,
+       mapping = aes(x = Gender, y = value, fill = variable)) +
+    geom_col(position = position_dodge()) +
+  ylab('Mean samplesize') +
+  ggtitle(label="Samplesizes within gender") +
+  scale_fill_manual("Variables", values = c("HC" = "seagreen", "SZ" = "orchid2")) 
+
+#Pitch (geom)
+
+plot23 <- ggplot(PitchMean, aes(names)) +
+  geom_point(aes(names, PITCH_F0SD_HC_M), color = "seagreen") + # must include argument label "data"
+  geom_point(aes(names, PITCH_F0SD_SZ_M), color = "orchid2")+
+  geom_errorbar(aes(ymin=PITCH_F0SD_HC_M - PITCH_F0SD_HC_SD, ymax = PITCH_F0SD_HC_M + PITCH_F0SD_HC_SD), color = "seagreen")+ 
+  geom_errorbar(aes(ymin=PITCH_F0SD_SZ_M - PITCH_F0SD_SZ_SD, ymax=PITCH_F0SD_SZ_M + PITCH_F0SD_SZ_SD), color = "orchid2")+
+    xlab('Study') +
+  ylab('Pitch mean')+
+  theme_minimal()+
+  ggtitle(label="Pitch by study")
+
+#Sample sizes (density)
+
+library(ggplot2)
+  
+plot24 <- ggplot() +
+  geom_density(aes(PitchMean$SAMPLE_SIZE_HC), fill="seagreen", color="black",alpha=0.6) +
+  geom_density(aes(PitchMean$SAMPLE_SIZE_SZ), fill="orchid2", color="black",alpha=0.6) + 
+  xlab('Sample sizes') +
+  theme_minimal()+
+  ggtitle(label="Plot of distributions")
+
+grid.arrange(plot21, plot22, plot23, plot24, nrow =  2)
+  
+```
+
+
+Calculate Effect sizes of pitch and SE (for the studies)
+```{r}
+data_PITCH_F0SD <- data %>% 
+  select(StudyID, ArticleID, contains("MALE_"), contains("FEMALE_"), contains("AGE_"), contains("SAMPLE_SIZE"),  contains("PITCH_F0SD_"))%>% 
+  drop_na(contains("PITCH_F0SD_"))
+
+# Find the effect size of every study containing the four parameters Mean, SD
+PitchMean <- escalc('SMD',
+                    n1i =SAMPLE_SIZE_HC, n2i=SAMPLE_SIZE_SZ,
+                    m1i = PITCH_F0SD_HC_M, m2i = PITCH_F0SD_SZ_M,
+                    sd1i = PITCH_F0SD_HC_SD, sd2i = PITCH_F0SD_SZ_SD,
+                    data = data_PITCH_F0SD)
+
+#renaming the columns
+PitchMean <-  PitchMean %>% 
+  rename(Cohens_d = yi, Cohens_d_var = vi)
+
+
+PitchMean$names <- rownames(PitchMean)
+
+PitchMean <- PitchMean %>%
+  mutate(names = as.numeric(names))
+  
+## This shows that the healthy control group in most cases have more variability in pitch as they have a positive cohen's d. The ones with negative cohen's d shows that the healthy control group has less variability in pitch 
+
+```
+
+
+## "second part" - make and fit the model 
+
+
+### Make the model with the data
+```{r}
+model_1_p <- bf(Cohens_d | se(Cohens_d_var)  ~ 1 + (1|StudyID))
+```
+
+### Get priors
+```{r}
+get_prior(data = PitchMean,
+          family = gaussian,
+          model_1_p)
+```
+
+
+### Setting priors
+```{r}
+model_1_p_priors <- c(
+prior(normal(0, 0.3), class = Intercept),
+prior(normal(0, 0.3), class = sd) 
+)
+```
+
+
+### Fit the model
+```{r}
+fitted_model_1_p <- 
+  brm(
+    model_1_p,
+    data = PitchMean,
+    family = gaussian,
+    prior = model_1_p_priors,
+    sample_prior = T,
+    iter = 2000, 
+    warmup = 1000,
+    cores = 2,
+    refresh=0,
+    chains = 2,
+    control = list(
+      adapt_delta = 0.999,
+      max_treedepth = 20))
+```
+
+
+
+### look at pp-check
+```{r}
+pp_check(fitted_model_1_p, ndraws = 100)
+```
+
+
+### Parameter recovery
+```{r}
+print(fitted_model_1_p)
+```
+
+### Visualize findings: population level effect size and cohens d per study with error bars 
+```{r}
+ggplot(PitchMean, aes(names)) +
+  geom_point(aes(names, Cohens_d), color = "black") + 
+  geom_errorbar(aes(ymin=Cohens_d - Cohens_d_var, ymax = Cohens_d + Cohens_d_var), color = "black")+
+  geom_hline(yintercept = c(.1), color = "red")
+```
+
+
+### Create new dataframe where publication bias from Q1 is applied 
+```{r}
+for(i in seq(PitchMean$StudyID)){
+  PitchMean$Published[i] <- ifelse(
+    abs(PitchMean$Cohens_d[i]) - (2*PitchMean$Cohens_d_var[i]) > 0,  
+    rbinom(1,1,.9), rbinom(1,1,.1))
+}
+
+new_pitch <- PitchMean%>%
+  filter(Published==1)
+```
+
+
+
+### Fit the model with new data 
+```{r}
+fitted_model_1_p_new <- 
+  brm(
+    model_1_p,
+    data = new_pitch,
+    family = gaussian,
+    prior = model_1_p_priors,
+    sample_prior = T,
+    iter = 2000, 
+    warmup = 1000,
+    cores = 2,
+    refresh=0,
+    chains = 2,
+    control = list(
+      adapt_delta = 0.999,
+      max_treedepth = 20))
+```
+
+
+### Parameter recovery
+```{r}
+print(fitted_model_1_p_new)
+```
+
+
+### Visualize findings: population level effect size and cohens d per study with error bars 
+```{r}
+ggplot(new_pitch, aes(names)) +
+  geom_point(aes(names, Cohens_d), color = "black") + 
+  geom_errorbar(aes(ymin=Cohens_d - Cohens_d_var, ymax = Cohens_d + Cohens_d_var), color = "black", width = 0.4)+
+  geom_hline(yintercept = c(.15), color = "red")
+```
