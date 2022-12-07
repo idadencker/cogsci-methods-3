@@ -76,16 +76,6 @@ library(gridExtra)
 ```
 
 
-```{r}
-#time normalize
-df <- read.csv("data_clean.csv") 
-
-mt_plot(
-  m, 
-  use = 'tn_trajectories',
-  color = 'trial_type'
-)
-```
 
 
 # Assignment 1  - Language development in autistic and neurotypical children

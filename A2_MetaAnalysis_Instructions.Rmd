@@ -316,6 +316,9 @@ BONUS question: assess the effect of task on the estimates (model comparison wit
 #load in data
 ```{r}
 real_data <- read_excel("Matrix_MetaAnalysis_Diagnosis_updated290719.xlsx")
+
+
+
 ```
 
 # Make dataset with needed coloumns
