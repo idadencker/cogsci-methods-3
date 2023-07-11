@@ -153,7 +153,7 @@ B0A <- rlnorm(n, mean = mu_ASD, sd = sd_ASD)
 B0TD <- rlnorm(n, mean = mu_TD, sd = sd_TD)
 B1A <- rlnorm(n, mean = mu_change_ASD, sd = sd_change_ASD)
 B1TD <- rlnorm(n, mean = mu_change_TD, sd = sd_change_TD)
-EA <- rlnorm(n, mean = 0, sd = e)
+EA <- rlnorm(n, mean = 0, sd = e)   
 ETD <- rlnorm(n, mean = 0, sd = e)
 
 #set up the data
